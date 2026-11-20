@@ -559,7 +559,7 @@ EFI_STATUS efi_main(
 
     ConOut->OutputString(
         ConOut,
-        u"Hello from Bare Metal!\r\n"
+        u"Hi!\r\n"
     );
 
 
