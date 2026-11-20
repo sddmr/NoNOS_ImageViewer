@@ -1,7 +1,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* Temel UEFI veri tipleri */
 
 typedef uint64_t EFI_STATUS;
 typedef uint16_t CHAR16;
@@ -9,7 +8,6 @@ typedef void *EFI_HANDLE;
 
 #define EFI_SUCCESS 0
 
-/* GUID */
 
 typedef struct {
     uint32_t Data1;
@@ -19,7 +17,6 @@ typedef struct {
 } EFI_GUID;
 
 
-/* Text Output Protocol */
 
 typedef struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL;
@@ -35,7 +32,6 @@ struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL {
 };
 
 
-/* File Protocol */
 
 typedef struct EFI_FILE_PROTOCOL EFI_FILE_PROTOCOL;
 
@@ -72,7 +68,6 @@ struct EFI_FILE_PROTOCOL {
 };
 
 
-/* Simple File System Protocol */
 
 typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
@@ -88,7 +83,6 @@ struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
 };
 
 
-/* Boot Services */
 
 typedef EFI_STATUS (*EFI_LOCATE_PROTOCOL)(
     EFI_GUID *Protocol,
@@ -117,7 +111,6 @@ typedef struct {
 } EFI_BOOT_SERVICES;
 
 
-/* System Table */
 
 typedef struct {
 
@@ -145,7 +138,6 @@ typedef struct {
 } EFI_SYSTEM_TABLE;
 
 
-/* GOP Mode Information */
 
 typedef struct {
 
@@ -163,7 +155,6 @@ typedef struct {
 } EFI_GRAPHICS_OUTPUT_MODE_INFORMATION;
 
 
-/* GOP Mode */
 
 typedef struct {
 
@@ -180,7 +171,6 @@ typedef struct {
 } EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE;
 
 
-/* GOP Protocol */
 
 typedef struct {
 
@@ -193,7 +183,6 @@ typedef struct {
 } EFI_GRAPHICS_OUTPUT_PROTOCOL;
 
 
-/* GUID Definitions */
 
 static EFI_GUID GOP_GUID = {
     0x9042a9de,
@@ -217,7 +206,6 @@ static EFI_GUID LOADED_IMAGE_GUID = {
 };
 
 
-/* Loaded Image Protocol */
 
 typedef struct {
 
@@ -243,7 +231,6 @@ typedef struct {
 } EFI_LOADED_IMAGE_PROTOCOL;
 
 
-/* Print Number */
 
 void PrintNumber(
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut,
@@ -277,7 +264,6 @@ void PrintNumber(
 }
 
 
-/* Draw Rectangle */
 
 void DrawRectangle(
     EFI_GRAPHICS_OUTPUT_PROTOCOL *GOP,
@@ -321,18 +307,83 @@ void DrawRectangle(
 }
 
 
-/* Read BMP File */
+static uint16_t ReadLE16(const uint8_t *p)
+{
+    return (uint16_t)p[0] |
+           ((uint16_t)p[1] << 8);
+}
+
+static uint32_t ReadLE32(const uint8_t *p)
+{
+    return (uint32_t)p[0] |
+           ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) |
+           ((uint32_t)p[3] << 24);
+}
+
+static void DrawBMP(
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *GOP,
+    const uint8_t *bmp,
+    uint32_t pixelOffset,
+    uint32_t imageWidth,
+    uint32_t imageHeight,
+    uint32_t rowStride,
+    int topDown
+)
+{
+    uint32_t screenWidth = GOP->Mode->Info->HorizontalResolution;
+    uint32_t screenHeight = GOP->Mode->Info->VerticalResolution;
+    uint32_t pitch = GOP->Mode->Info->PixelsPerScanLine;
+    uint32_t pixelFormat = GOP->Mode->Info->PixelFormat;
+
+    if (pixelFormat != 0 && pixelFormat != 1) {
+        return;
+    }
+
+    volatile uint32_t *frameBuffer =
+        (volatile uint32_t *)(uintptr_t)GOP->Mode->FrameBufferBase;
+
+    for (uint32_t y = 0; y < imageHeight; y++) {
+        uint32_t sourceY = topDown ? y : imageHeight - 1 - y;
+
+        for (uint32_t x = 0; x < imageWidth; x++) {
+            if (x >= screenWidth || y >= screenHeight) {
+                continue;
+            }
+
+            uint64_t sourceIndex = (uint64_t)pixelOffset +
+                                   (uint64_t)sourceY * rowStride +
+                                   (uint64_t)x * 3;
+
+            uint8_t blue = bmp[sourceIndex];
+            uint8_t green = bmp[sourceIndex + 1];
+            uint8_t red = bmp[sourceIndex + 2];
+
+            uint32_t color;
+            if (pixelFormat == 1) {
+                color = ((uint32_t)red << 16) |
+                        ((uint32_t)green << 8) | blue;
+            } else {
+                color = ((uint32_t)blue << 16) |
+                        ((uint32_t)green << 8) | red;
+            }
+
+            frameBuffer[(uint64_t)y * pitch + x] = color;
+        }
+    }
+}
+
 
 EFI_STATUS ReadBMP(
     EFI_FILE_PROTOCOL *Root,
-    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut
+    EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut,
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *GOP
 ) {
 
     EFI_FILE_PROTOCOL *File = 0;
 
     EFI_STATUS status;
 
-    /* BMP dosyasını aç */
 
     status = Root->Open(
         Root,
@@ -358,14 +409,12 @@ EFI_STATUS ReadBMP(
     );
 
 
-    /* BMP verisi için RAM alanı */
 
     static uint8_t bmpBuffer[1024 * 1024];
 
     uint64_t bufferSize = sizeof(bmpBuffer);
 
 
-    /* Dosyayı oku */
 
     status = File->Read(
         File,
@@ -397,7 +446,6 @@ EFI_STATUS ReadBMP(
     );
 
 
-    /* BMP başlık bilgileri */
 
     if (bufferSize < 54 ||
         bmpBuffer[0] != 'B' ||
@@ -413,14 +461,36 @@ EFI_STATUS ReadBMP(
         return 1;
     }
 
-    uint32_t imageWidth =
-        *(uint32_t *)&bmpBuffer[18];
+    uint32_t pixelOffset = ReadLE32(&bmpBuffer[10]);
+    int32_t signedWidth = (int32_t)ReadLE32(&bmpBuffer[18]);
+    int32_t signedHeight = (int32_t)ReadLE32(&bmpBuffer[22]);
+    uint16_t planes = ReadLE16(&bmpBuffer[26]);
+    uint16_t bitsPerPixel = ReadLE16(&bmpBuffer[28]);
+    uint32_t compression = ReadLE32(&bmpBuffer[30]);
 
-    int32_t imageHeight =
-        *(int32_t *)&bmpBuffer[22];
+    if (signedWidth <= 0 || signedHeight == 0 ||
+        signedHeight == INT32_MIN || planes != 1 ||
+        bitsPerPixel != 24 || compression != 0) {
+        ConOut->OutputString(ConOut, u"Unsupported BMP format!\r\n");
+        File->Close(File);
+        return 1;
+    }
 
-    uint16_t bitsPerPixel =
-        *(uint16_t *)&bmpBuffer[28];
+    uint32_t imageWidth = (uint32_t)signedWidth;
+    uint32_t imageHeight = (uint32_t)(
+        signedHeight < 0 ? -signedHeight : signedHeight
+    );
+
+    uint64_t rowStride64 = (((uint64_t)imageWidth * 3) + 3) & ~((uint64_t)3);
+    uint64_t requiredSize = (uint64_t)pixelOffset + rowStride64 * imageHeight;
+
+    if (rowStride64 > UINT32_MAX || pixelOffset > bufferSize ||
+        requiredSize > bufferSize) {
+        ConOut->OutputString(ConOut, u"BMP pixel data is incomplete!\r\n");
+        File->Close(File);
+        return 1;
+    }
+    uint32_t rowStride = (uint32_t)rowStride64;
 
 
     ConOut->OutputString(
@@ -441,9 +511,7 @@ EFI_STATUS ReadBMP(
 
     PrintNumber(
         ConOut,
-        imageHeight < 0
-            ? (uint32_t)(-imageHeight)
-            : (uint32_t)imageHeight
+        imageHeight
     );
 
 
@@ -463,7 +531,16 @@ EFI_STATUS ReadBMP(
     );
 
 
-    /* Dosyayı kapat */
+    DrawBMP(
+        GOP,
+        bmpBuffer,
+        pixelOffset,
+        imageWidth,
+        imageHeight,
+        rowStride,
+        signedHeight < 0
+    );
+
 
     File->Close(File);
 
@@ -471,7 +548,6 @@ EFI_STATUS ReadBMP(
 }
 
 
-/* UEFI Entry Point */
 
 EFI_STATUS efi_main(
     EFI_HANDLE ImageHandle,
@@ -487,7 +563,6 @@ EFI_STATUS efi_main(
     );
 
 
-    /* GOP protokolünü bul */
 
     EFI_GRAPHICS_OUTPUT_PROTOCOL *GOP = 0;
 
@@ -516,19 +591,6 @@ EFI_STATUS efi_main(
     );
 
 
-    /* Kırmızı dikdörtgen çiz */
-
-    DrawRectangle(
-        GOP,
-        100,
-        100,
-        300,
-        200,
-        0x00FF0000
-    );
-
-
-    /* Loaded Image Protocol */
 
     EFI_LOADED_IMAGE_PROTOCOL *LoadedImage = 0;
 
@@ -552,7 +614,6 @@ EFI_STATUS efi_main(
     }
 
 
-    /* Simple File System */
 
     EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileSystem = 0;
 
@@ -576,7 +637,6 @@ EFI_STATUS efi_main(
     }
 
 
-    /* ESP Root Directory */
 
     EFI_FILE_PROTOCOL *Root = 0;
 
@@ -607,11 +667,11 @@ EFI_STATUS efi_main(
 
     ReadBMP(
         Root,
-        ConOut
+        ConOut,
+        GOP
     );
 
 
-    /* Uygulamayı açık tut */
 
     while (1) {
         __asm__ volatile("hlt");
